@@ -1,16 +1,22 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { ClipboardCheck, LoaderCircle, Plus, Search, Wrench } from 'lucide-react'
 import { createClient } from '@/app/lib/supabase/client'
-import Link from 'next/link'
 
 interface MaintenanceLog {
   id: string
-  machine_name: string
-  technician_name: string
-  action_taken: string
-  spare_parts: string
+  machine_name: string | null
+  technician_name: string | null
+  action_taken: string | null
+  spare_parts: string | null
   created_at: string
+}
+
+const supabase = createClient()
+
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat('th-TH', { day: 'numeric', month: 'short', year: 'numeric' }).format(new Date(value))
 }
 
 export default function MaintenancePage() {
@@ -19,153 +25,110 @@ export default function MaintenancePage() {
   const [technicianName, setTechnicianName] = useState('')
   const [actionTaken, setActionTaken] = useState('')
   const [spareParts, setSpareParts] = useState('')
-  const [loading, setLoading] = useState(false)
-
-  const supabase = createClient()
-
-  const fetchLogs = async () => {
-    const { data } = await supabase
-      .from('maintenance_logs')
-      .select('*')
-      .order('created_at', { ascending: false })
-    if (data) setLogs(data)
-  }
+  const [search, setSearch] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [refreshKey, setRefreshKey] = useState(0)
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
 
   useEffect(() => {
-    fetchLogs()
-  }, [])
-
-  const handleAddLog = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setLoading(true)
-
-    const { error } = await supabase.from('maintenance_logs').insert([
-      {
-        machine_name: machineName,
-        technician_name: technicianName,
-        action_taken: actionTaken,
-        spare_parts: spareParts || '-'
+    let active = true
+    const loadLogs = async () => {
+      setLoading(true)
+      const { data, error: queryError } = await supabase.from('maintenance_logs').select('*').order('created_at', { ascending: false })
+      if (!active) return
+      if (queryError) setError('โหลดประวัติไม่สำเร็จ: ' + queryError.message)
+      else {
+        setLogs(data ?? [])
+        setError('')
       }
-    ])
+      setLoading(false)
+    }
+    void loadLogs()
+    return () => { active = false }
+  }, [refreshKey])
 
-    if (error) {
-      alert('เกิดข้อผิดพลาด: ' + error.message)
-    } else {
+  const filteredLogs = useMemo(() => {
+    const term = search.trim().toLowerCase()
+    if (!term) return logs
+    return logs.filter((log) => [log.machine_name, log.technician_name, log.action_taken, log.spare_parts]
+      .some((value) => value?.toLowerCase().includes(term)))
+  }, [logs, search])
+
+  const handleAddLog = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setSaving(true)
+    setError('')
+    setMessage('')
+    const { error: insertError } = await supabase.from('maintenance_logs').insert([{
+      machine_name: machineName,
+      technician_name: technicianName,
+      action_taken: actionTaken,
+      spare_parts: spareParts || '-',
+    }])
+    if (insertError) setError('บันทึกงานซ่อมไม่สำเร็จ: ' + insertError.message)
+    else {
       setMachineName('')
       setTechnicianName('')
       setActionTaken('')
       setSpareParts('')
-      fetchLogs()
+      setMessage('บันทึกงานซ่อมเรียบร้อยแล้ว')
+      setRefreshKey((value) => value + 1)
     }
-    setLoading(false)
+    setSaving(false)
   }
 
   return (
-    <div className="min-h-screen bg-gray-100 p-6">
-      <div className="mx-auto max-w-6xl space-y-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <Link href="/dashboard" className="text-sm font-medium text-blue-600 hover:underline">
-              ← กลับหน้า Dashboard
-            </Link>
-            <h1 className="mt-1 text-2xl font-bold text-gray-800">
-              ประวัติการบำรุงรักษา (Maintenance Logs)
-            </h1>
-          </div>
+    <div className="space-y-5">
+      <section className="page-heading">
+        <div>
+          <p className="page-kicker">ประวัติการดำเนินงาน</p>
+          <h1 className="page-title">งานซ่อมบำรุง</h1>
+          <p className="page-description">บันทึกวิธีแก้ไข ผู้รับผิดชอบ และอะไหล่ เพื่อให้ตรวจสอบย้อนหลังได้</p>
         </div>
+      </section>
 
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-          <div className="rounded-xl bg-white p-5 shadow-sm lg:col-span-1">
-            <h2 className="mb-4 text-lg font-bold text-gray-800">บันทึกการซ่อมบำรุงใหม่</h2>
-            <form onSubmit={handleAddLog} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700">ชื่อเครื่องจักร</label>
-                <input
-                  type="text"
-                  required
-                  value={machineName}
-                  onChange={(e) => setMachineName(e.target.value)}
-                  placeholder="เช่น CNC Machine A"
-                  className="mt-1 w-full rounded-md border p-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
+      {error && <div className="feedback-message" role="alert">{error}</div>}
+      {message && <div className="feedback-message is-success" role="status">{message}</div>}
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700">ชื่อผู้ดำเนินการ / ช่างผู้ซ่อม</label>
-                <input
-                  type="text"
-                  required
-                  value={technicianName}
-                  onChange={(e) => setTechnicianName(e.target.value)}
-                  placeholder="เช่น ช่างสมชาย"
-                  className="mt-1 w-full rounded-md border p-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
+      <div className="form-layout">
+        <section className="surface-panel">
+          <div className="panel-header"><div><h2 className="panel-title">บันทึกงานซ่อมใหม่</h2><p className="panel-subtitle">เก็บรายละเอียดหลังดำเนินงานเสร็จ</p></div><span className="metric-icon"><ClipboardCheck size={17} /></span></div>
+          <form onSubmit={handleAddLog} className="panel-body form-stack">
+            <div><label className="field-label" htmlFor="maintenance-machine">ชื่อเครื่องจักร</label><input id="maintenance-machine" required value={machineName} onChange={(event) => setMachineName(event.target.value)} placeholder="เช่น เครื่อง CNC Line 1" className="field-control" /></div>
+            <div><label className="field-label" htmlFor="maintenance-technician">ผู้ดำเนินการ</label><input id="maintenance-technician" required value={technicianName} onChange={(event) => setTechnicianName(event.target.value)} placeholder="ชื่อช่างหรือผู้รับผิดชอบ" className="field-control" /></div>
+            <div><label className="field-label" htmlFor="maintenance-action">วิธีแก้ไข / การดำเนินการ</label><textarea id="maintenance-action" required value={actionTaken} onChange={(event) => setActionTaken(event.target.value)} placeholder="อาการที่พบ สาเหตุ และวิธีแก้ไข" className="field-control" /></div>
+            <div><label className="field-label" htmlFor="maintenance-parts">อะไหล่ที่ใช้ <span className="text-slate-400">(ถ้ามี)</span></label><input id="maintenance-parts" value={spareParts} onChange={(event) => setSpareParts(event.target.value)} placeholder="เช่น ฟิวส์ 10A, น้ำมันหล่อลื่น" className="field-control" /></div>
+            <button type="submit" className="primary-button w-full" disabled={saving}>{saving ? <LoaderCircle size={15} className="animate-spin" /> : <Plus size={15} />}{saving ? 'กำลังบันทึก...' : 'บันทึกงานซ่อม'}</button>
+          </form>
+        </section>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700">การดำเนินการ / วิธีแก้ไขปัญหา</label>
-                <textarea
-                  required
-                  rows={3}
-                  value={actionTaken}
-                  onChange={(e) => setActionTaken(e.target.value)}
-                  placeholder="อธิบายสิ่งที่ได้ดำเนินการแก้ไข..."
-                  className="mt-1 w-full rounded-md border p-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700">อะไหล่ที่ใช้เปลี่ยน (ถ้ามี)</label>
-                <input
-                  type="text"
-                  value={spareParts}
-                  onChange={(e) => setSpareParts(e.target.value)}
-                  placeholder="เช่น ฟิวส์ 10A, น้ำมันหล่อลื่น"
-                  className="mt-1 w-full rounded-md border p-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full rounded-md bg-green-600 py-2 text-sm font-semibold text-white transition hover:bg-green-700 disabled:opacity-50"
-              >
-                {loading ? 'กำลังบันทึก...' : '+ บันทึกการซ่อมบำรุง'}
-              </button>
-            </form>
+        <section className="surface-panel">
+          <div className="panel-header panel-header-stack">
+            <div><h2 className="panel-title">ประวัติการซ่อม</h2><p className="panel-subtitle">{filteredLogs.length} จาก {logs.length} รายการ</p></div>
+            <label className="search-control"><Search size={15} /><input aria-label="ค้นหาประวัติซ่อม" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="ค้นหาเครื่องจักร ช่าง หรืออะไหล่" className="field-control" /></label>
           </div>
-
-          <div className="rounded-xl bg-white p-5 shadow-sm lg:col-span-2">
-            <h2 className="mb-4 text-lg font-bold text-gray-800">ประวัติการบำรุงรักษาทั้งหมด</h2>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead className="bg-gray-50 text-xs font-semibold uppercase text-gray-500">
-                  <tr>
-                    <th className="p-3">เครื่องจักร / ช่างซ่อม</th>
-                    <th className="p-3">การดำเนินการ</th>
-                    <th className="p-3">อะไหล่ที่ใช้</th>
-                    <th className="p-3">วันที่</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {logs.map((log) => (
-                    <tr key={log.id} className="hover:bg-gray-50">
-                      <td className="p-3">
-                        <p className="font-semibold text-gray-800">{log.machine_name}</p>
-                        <span className="text-xs text-gray-500">{log.technician_name}</span>
-                      </td>
-                      <td className="p-3 text-gray-600">{log.action_taken}</td>
-                      <td className="p-3 text-gray-600">{log.spare_parts}</td>
-                      <td className="p-3 text-xs text-gray-500">
-                        {new Date(log.created_at).toLocaleDateString('th-TH')}
-                      </td>
+          {loading ? <div className="panel-body form-stack"><div className="loading-line" /><div className="loading-line" /><div className="loading-line" /></div> : filteredLogs.length ? (
+            <div className="data-table-wrap">
+              <table className="data-table">
+                <thead><tr><th>เครื่องจักร / ผู้ดำเนินการ</th><th>การดำเนินการ</th><th>อะไหล่</th><th>วันที่</th></tr></thead>
+                <tbody>
+                  {filteredLogs.map((log) => (
+                    <tr key={log.id}>
+                      <td><span className="cell-primary">{log.machine_name || 'ไม่ระบุเครื่องจักร'}</span><span className="cell-secondary">{log.technician_name || 'ไม่ระบุผู้ดำเนินการ'}</span></td>
+                      <td className="table-description">{log.action_taken || '—'}</td>
+                      <td>{log.spare_parts || '—'}</td>
+                      <td>{formatDate(log.created_at)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          </div>
-        </div>
+          ) : (
+            <div className="empty-state"><div><span className="empty-state-icon"><Wrench size={21} /></span><p className="empty-state-title">{search ? 'ไม่พบประวัติที่ค้นหา' : 'ยังไม่มีประวัติการซ่อม'}</p><p className="empty-state-copy">{search ? 'ลองค้นหาด้วยชื่อเครื่องจักรหรือผู้ดำเนินการอื่น' : 'หลังซ่อมเสร็จ บันทึกรายละเอียดไว้เพื่อให้ทีมใช้เป็นข้อมูลอ้างอิง'}</p></div></div>
+          )}
+        </section>
       </div>
     </div>
   )

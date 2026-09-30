@@ -1,15 +1,25 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { Check, LoaderCircle, Plus, Search, Wrench } from 'lucide-react'
 import { createClient } from '@/app/lib/supabase/client'
-import Link from 'next/link'
 
 interface Machine {
   id: string
   name: string
-  model: string
-  location: string
-  status: string
+  model: string | null
+  location: string | null
+  status: string | null
+  created_at?: string
+}
+
+const supabase = createClient()
+
+function statusClass(status: string | null) {
+  if (status === 'Online' || status === 'active') return 'status-pill'
+  if (status === 'Maintenance') return 'status-pill is-warning'
+  if (status === 'Offline') return 'status-pill is-danger'
+  return 'status-pill is-neutral'
 }
 
 export default function MachinesPage() {
@@ -17,141 +27,115 @@ export default function MachinesPage() {
   const [name, setName] = useState('')
   const [model, setModel] = useState('')
   const [location, setLocation] = useState('')
-  const [loading, setLoading] = useState(false)
+  const [search, setSearch] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [updatingId, setUpdatingId] = useState('')
+  const [refreshKey, setRefreshKey] = useState(0)
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
 
-  const supabase = createClient()
-
-  // ดึงข้อมูลจาก Supabase
-  const fetchMachines = async () => {
-    const { data, error } = await supabase
+  useEffect(() => {
+    let active = true
+    supabase
       .from('machines')
       .select('*')
       .order('created_at', { ascending: false })
-    if (data) setMachines(data)
-  }
+      .then(({ data, error: queryError }) => {
+        if (!active) return
+        if (queryError) setError(queryError.message)
+        else {
+          setMachines(data ?? [])
+          setError('')
+        }
+        setLoading(false)
+      })
+    return () => { active = false }
+  }, [refreshKey])
 
-  useEffect(() => {
-    fetchMachines()
-  }, [])
+  const filteredMachines = useMemo(() => {
+    const term = search.trim().toLowerCase()
+    if (!term) return machines
+    return machines.filter((machine) => [machine.name, machine.model, machine.location, machine.status]
+      .some((value) => value?.toLowerCase().includes(term)))
+  }, [machines, search])
 
-  // บันทึกลง Supabase
-  const handleAddMachine = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setLoading(true)
+  const handleAddMachine = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    setSaving(true)
+    setError('')
+    setMessage('')
 
-    const { error } = await supabase.from('machines').insert([
-      { name, model, location, status: 'Online' }
-    ])
-
-    if (error) {
-      alert('เกิดข้อผิดพลาดในการบันทึก: ' + error.message)
-    } else {
+    const { error: insertError } = await supabase.from('machines').insert([{ name, model, location, status: 'Online' }])
+    if (insertError) setError('เพิ่มเครื่องจักรไม่สำเร็จ: ' + insertError.message)
+    else {
       setName('')
       setModel('')
       setLocation('')
-      fetchMachines() // โหลดข้อมูลใหม่ทันที
+      setMessage('เพิ่มเครื่องจักรเรียบร้อยแล้ว')
+      setRefreshKey((value) => value + 1)
     }
-    setLoading(false)
+    setSaving(false)
+  }
+
+  const handleStatusChange = async (id: string, status: string) => {
+    setUpdatingId(id)
+    setError('')
+    const { error: updateError } = await supabase.from('machines').update({ status }).eq('id', id)
+    if (updateError) setError('อัปเดตสถานะไม่สำเร็จ: ' + updateError.message)
+    else setRefreshKey((value) => value + 1)
+    setUpdatingId('')
   }
 
   return (
-    <div className="min-h-screen bg-gray-100 p-6">
-      <div className="mx-auto max-w-6xl space-y-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <Link href="/dashboard" className="text-sm font-medium text-blue-600 hover:underline">
-              ← กลับหน้า Dashboard
-            </Link>
-            <h1 className="mt-1 text-2xl font-bold text-gray-800">
-              จัดการเครื่องจักร (Machines)
-            </h1>
-          </div>
+    <div className="space-y-5">
+      <section className="page-heading">
+        <div>
+          <p className="page-kicker">ทะเบียนสินทรัพย์</p>
+          <h1 className="page-title">เครื่องจักร</h1>
+          <p className="page-description">จัดการข้อมูลพื้นฐานและสถานะการทำงานของเครื่องจักรในโรงงาน</p>
         </div>
+      </section>
 
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-          <div className="rounded-xl bg-white p-5 shadow-sm lg:col-span-1">
-            <h2 className="mb-4 text-lg font-bold text-gray-800">เพิ่มเครื่องจักรใหม่</h2>
-            <form onSubmit={handleAddMachine} className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700">ชื่อเครื่องจักร</label>
-                <input
-                  type="text"
-                  required
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="เช่น CNC Milling Machine A"
-                  className="mt-1 w-full rounded-md border p-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
+      {error && <div className="feedback-message" role="alert">{error}</div>}
+      {message && <div className="feedback-message is-success" role="status">{message}</div>}
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700">รุ่น / Model</label>
-                <input
-                  type="text"
-                  required
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                  placeholder="เช่น VF-2SS"
-                  className="mt-1 w-full rounded-md border p-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
+      <div className="form-layout">
+        <section className="surface-panel">
+          <div className="panel-header"><div><h2 className="panel-title">เพิ่มเครื่องจักร</h2><p className="panel-subtitle">กรอกข้อมูลพื้นฐานเพื่อเพิ่มเข้าทะเบียน</p></div><span className="metric-icon"><Plus size={17} /></span></div>
+          <form onSubmit={handleAddMachine} className="panel-body form-stack">
+            <div><label className="field-label" htmlFor="machine-name">ชื่อเครื่องจักร</label><input id="machine-name" required value={name} onChange={(event) => setName(event.target.value)} placeholder="เช่น เครื่อง CNC Line 1" className="field-control" /></div>
+            <div><label className="field-label" htmlFor="machine-model">รุ่น / Model</label><input id="machine-model" required value={model} onChange={(event) => setModel(event.target.value)} placeholder="เช่น VF-2SS" className="field-control" /></div>
+            <div><label className="field-label" htmlFor="machine-location">ตำแหน่งติดตั้ง</label><input id="machine-location" required value={location} onChange={(event) => setLocation(event.target.value)} placeholder="เช่น อาคาร 1 · โซน A" className="field-control" /></div>
+            <button type="submit" className="primary-button w-full" disabled={saving}>{saving ? <LoaderCircle size={15} className="animate-spin" /> : <Plus size={15} />}{saving ? 'กำลังบันทึก...' : 'เพิ่มเครื่องจักร'}</button>
+          </form>
+        </section>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700">สถานที่ติดตั้ง / Location</label>
-                <input
-                  type="text"
-                  required
-                  value={location}
-                  onChange={(e) => setLocation(e.target.value)}
-                  placeholder="เช่น โซน A - โรงงาน 1"
-                  className="mt-1 w-full rounded-md border p-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-
-              <button
-                type="submit"
-                disabled={loading}
-                className="w-full rounded-md bg-blue-600 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
-              >
-                {loading ? 'กำลังบันทึก...' : '+ เพิ่มเครื่องจักร'}
-              </button>
-            </form>
+        <section className="surface-panel">
+          <div className="panel-header panel-header-stack">
+            <div><h2 className="panel-title">รายการเครื่องจักร</h2><p className="panel-subtitle">{machines.length} รายการในทะเบียน</p></div>
+            <label className="search-control"><Search size={15} /><input aria-label="ค้นหาเครื่องจักร" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="ค้นหาชื่อ รุ่น หรือสถานที่" className="field-control" /></label>
           </div>
-
-          <div className="rounded-xl bg-white p-5 shadow-sm lg:col-span-2">
-            <h2 className="mb-4 text-lg font-bold text-gray-800">รายการเครื่องจักรทั้งหมด</h2>
-            {machines.length === 0 ? (
-              <p className="py-8 text-center text-sm text-gray-500">ยังไม่มีข้อมูลเครื่องจักรในระบบ</p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-sm">
-                  <thead className="bg-gray-50 text-xs font-semibold uppercase text-gray-500">
-                    <tr>
-                      <th className="p-3">ชื่อเครื่องจักร</th>
-                      <th className="p-3">รุ่น</th>
-                      <th className="p-3">สถานที่</th>
-                      <th className="p-3">สถานะ</th>
+          {loading ? <div className="panel-body form-stack"><div className="loading-line" /><div className="loading-line" /><div className="loading-line" /></div> : filteredMachines.length ? (
+            <div className="data-table-wrap">
+              <table className="data-table">
+                <thead><tr><th>เครื่องจักร</th><th>รุ่น</th><th>สถานที่</th><th>สถานะการทำงาน</th></tr></thead>
+                <tbody>
+                  {filteredMachines.map((machine) => (
+                    <tr key={machine.id}>
+                      <td><span className="cell-primary">{machine.name}</span><span className="cell-secondary">รหัส {machine.id.slice(0, 8)}</span></td>
+                      <td>{machine.model || '—'}</td>
+                      <td>{machine.location || '—'}</td>
+                      <td><div className="machine-status-cell"><span className={statusClass(machine.status)}>{machine.status || 'ไม่ระบุ'}</span><select aria-label={`เปลี่ยนสถานะ ${machine.name}`} className="field-control status-select" value={machine.status || 'Online'} disabled={updatingId === machine.id} onChange={(event) => void handleStatusChange(machine.id, event.target.value)}><option value="Online">Online</option><option value="Maintenance">Maintenance</option><option value="Offline">Offline</option></select>{updatingId === machine.id && <Check size={14} className="text-emerald-700" />}</div></td>
                     </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {machines.map((m) => (
-                      <tr key={m.id} className="hover:bg-gray-50">
-                        <td className="p-3 font-medium text-gray-800">{m.name}</td>
-                        <td className="p-3 text-gray-600">{m.model}</td>
-                        <td className="p-3 text-gray-600">{m.location}</td>
-                        <td className="p-3">
-                          <span className="rounded bg-green-100 px-2 py-1 text-xs font-semibold text-green-700">
-                            {m.status}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </div>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="empty-state"><div><span className="empty-state-icon"><Wrench size={21} /></span><p className="empty-state-title">{search ? 'ไม่พบเครื่องจักรที่ค้นหา' : 'ยังไม่มีเครื่องจักรในทะเบียน'}</p><p className="empty-state-copy">{search ? 'ลองใช้ชื่อ รุ่น หรือสถานที่อื่น' : 'เพิ่มเครื่องจักรทางด้านซ้ายเพื่อเริ่มติดตามสถานะและงานซ่อม'}</p></div></div>
+          )}
+        </section>
       </div>
     </div>
   )
