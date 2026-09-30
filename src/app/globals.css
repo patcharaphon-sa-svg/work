@@ -106,6 +106,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .form-layout { display: grid; grid-template-columns: minmax(280px, .78fr) minmax(0, 1.55fr); align-items: start; gap: 16px; }
 .form-stack { display: grid; gap: 14px; }
 .field-label { display: block; margin-bottom: 6px; color: #3f5049; font-size: 11px; font-weight: 700; }
+.field-hint { margin: 6px 0 0; color: #77847e; font-size: 10px; line-height: 1.5; }
+.field-hint a { color: var(--brand); font-weight: 700; text-decoration: underline; text-underline-offset: 2px; }
 .field-control { display: block; width: 100%; min-height: 40px; padding: 9px 11px; border: 1px solid #d6e0db; border-radius: 6px; color: #23332d; background: #fff; font-size: 12px; transition: border 140ms ease, box-shadow 140ms ease; }
 .field-control::placeholder { color: #a0aca6; }
 .field-control:focus { border-color: #38856d; outline: none; box-shadow: 0 0 0 3px rgb(18 107 83 / 12%); }

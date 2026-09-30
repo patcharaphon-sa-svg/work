@@ -7,12 +7,19 @@ import { createClient } from '@/app/lib/supabase/client'
 
 interface RecentAlarm {
   id: string
-  machine_name: string | null
+  machine_id: string
   alarm_code: string | null
-  severity: string | null
+  cause: string | null
   description: string | null
   status: string | null
-  created_at: string
+  occurred_at: string | null
+  created_at: string | null
+}
+
+interface MachineSummary {
+  id: string
+  machine_id: string
+  name: string
 }
 
 const supabase = createClient()
@@ -26,18 +33,19 @@ function formatDate(value: string) {
   }).format(new Date(value))
 }
 
-function severityClass(value: string | null) {
-  if (value === 'Critical') return 'status-pill is-danger'
-  if (value === 'Warning') return 'status-pill is-warning'
+function alarmStatusClass(value: string | null) {
+  if (value === 'Open') return 'status-pill is-danger'
+  if (value === 'In Progress') return 'status-pill is-warning'
   return 'status-pill is-neutral'
 }
 
 export default function DashboardPage() {
   const [machineCount, setMachineCount] = useState<number | null>(null)
-  const [alarmCount, setAlarmCount] = useState<number | null>(null)
+  const [openAlarmCount, setOpenAlarmCount] = useState<number | null>(null)
+  const [inProgressCount, setInProgressCount] = useState<number | null>(null)
   const [maintenanceCount, setMaintenanceCount] = useState<number | null>(null)
-  const [criticalCount, setCriticalCount] = useState<number | null>(null)
   const [recentAlarms, setRecentAlarms] = useState<RecentAlarm[]>([])
+  const [machineNames, setMachineNames] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [refreshKey, setRefreshKey] = useState(0)
@@ -49,28 +57,30 @@ export default function DashboardPage() {
       setLoading(true)
       setError('')
 
-      const [machines, alarms, logs, critical, recent] = await Promise.all([
+      const [machines, openAlarms, inProgressAlarms, logs, recent, machineList] = await Promise.all([
         supabase.from('machines').select('*', { count: 'exact', head: true }),
-        supabase.from('alarms').select('*', { count: 'exact', head: true }).eq('status', 'Active'),
+        supabase.from('alarms').select('*', { count: 'exact', head: true }).eq('status', 'Open'),
+        supabase.from('alarms').select('*', { count: 'exact', head: true }).eq('status', 'In Progress'),
         supabase.from('maintenance_logs').select('*', { count: 'exact', head: true }),
-        supabase.from('alarms').select('*', { count: 'exact', head: true }).eq('status', 'Active').eq('severity', 'Critical'),
         supabase
           .from('alarms')
-          .select('id, machine_name, alarm_code, severity, description, status, created_at')
+          .select('id, machine_id, alarm_code, cause, description, status, occurred_at, created_at')
           .order('created_at', { ascending: false })
           .limit(6),
+        supabase.from('machines').select('id, machine_id, name'),
       ])
 
       if (!active) return
-      const queryError = machines.error ?? alarms.error ?? logs.error ?? critical.error ?? recent.error
+      const queryError = machines.error ?? openAlarms.error ?? inProgressAlarms.error ?? logs.error ?? recent.error ?? machineList.error
       if (queryError) {
         setError('ดึงข้อมูลไม่สำเร็จ: ' + queryError.message)
       } else {
         setMachineCount(machines.count ?? 0)
-        setAlarmCount(alarms.count ?? 0)
+        setOpenAlarmCount(openAlarms.count ?? 0)
+        setInProgressCount(inProgressAlarms.count ?? 0)
         setMaintenanceCount(logs.count ?? 0)
-        setCriticalCount(critical.count ?? 0)
         setRecentAlarms(recent.data ?? [])
+        setMachineNames(Object.fromEntries((machineList.data ?? []).map((machine: MachineSummary) => [machine.id, `${machine.machine_id} · ${machine.name}`])))
       }
       setLoading(false)
     }
@@ -106,14 +116,14 @@ export default function DashboardPage() {
           <p className="metric-caption">รายการในทะเบียนเครื่องจักร</p>
         </article>
         <article className="metric-card">
-          <div className="metric-topline"><span>แจ้งเตือนที่ยังเปิด</span><span className="metric-icon is-warning"><BellRing size={17} /></span></div>
-          <p className="metric-value">{loading ? '—' : alarmCount}</p>
-          <p className="metric-caption">สถานะ Active ที่รอดำเนินการ</p>
+          <div className="metric-topline"><span>แจ้งเตือนใหม่</span><span className="metric-icon is-danger"><BellRing size={17} /></span></div>
+          <p className="metric-value">{loading ? '—' : openAlarmCount}</p>
+          <p className="metric-caption">สถานะ Open ที่รอรับงาน</p>
         </article>
         <article className="metric-card">
-          <div className="metric-topline"><span>ระดับวิกฤต</span><span className="metric-icon is-danger"><CircleAlert size={17} /></span></div>
-          <p className="metric-value">{loading ? '—' : criticalCount}</p>
-          <p className="metric-caption">ต้องจัดการเป็นลำดับแรก</p>
+          <div className="metric-topline"><span>กำลังดำเนินการ</span><span className="metric-icon is-warning"><CircleAlert size={17} /></span></div>
+          <p className="metric-value">{loading ? '—' : inProgressCount}</p>
+          <p className="metric-caption">สถานะ In Progress</p>
         </article>
         <article className="metric-card">
           <div className="metric-topline"><span>บันทึกซ่อมบำรุง</span><span className="metric-icon"><Wrench size={17} /></span></div>
@@ -140,14 +150,14 @@ export default function DashboardPage() {
           ) : recentAlarms.length ? (
             <div className="data-table-wrap">
               <table className="data-table">
-                <thead><tr><th>เครื่องจักร</th><th>ความรุนแรง</th><th>สถานะ</th><th>เวลา</th></tr></thead>
+                <thead><tr><th>เครื่องจักร</th><th>รหัส / สาเหตุ</th><th>สถานะ</th><th>เวลา</th></tr></thead>
                 <tbody>
                   {recentAlarms.map((alarm) => (
                     <tr key={alarm.id}>
-                      <td><span className="cell-primary">{alarm.machine_name || 'ไม่ระบุเครื่องจักร'}</span><span className="cell-secondary">{alarm.alarm_code || alarm.description || 'ไม่มีรายละเอียด'}</span></td>
-                      <td><span className={severityClass(alarm.severity)}>{alarm.severity || 'ไม่ระบุ'}</span></td>
-                      <td><span className={alarm.status === 'Active' ? 'status-pill is-danger' : 'status-pill is-neutral'}>{alarm.status || 'ไม่ระบุ'}</span></td>
-                      <td>{formatDate(alarm.created_at)}</td>
+                      <td><span className="cell-primary">{machineNames[alarm.machine_id] || 'ไม่พบข้อมูลเครื่อง'}</span></td>
+                      <td><span className="cell-primary">{alarm.alarm_code || '—'}</span><span className="cell-secondary">{alarm.cause || alarm.description || 'ไม่มีรายละเอียด'}</span></td>
+                      <td><span className={alarmStatusClass(alarm.status)}>{alarm.status || 'ไม่ระบุ'}</span></td>
+                      <td>{formatDate(alarm.occurred_at ?? alarm.created_at ?? new Date().toISOString())}</td>
                     </tr>
                   ))}
                 </tbody>
